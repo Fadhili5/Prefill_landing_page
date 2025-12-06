@@ -3,7 +3,14 @@ import { Flag } from "lucide-react";
 
 const columns = [
   { title: "Product", links: ["Features", "Pricing", "FAQ"] },
-  { title: "Resources", links: ["Blog", "Support", "Privacy"] },
+  { 
+    title: "Resources", 
+    links: [
+      { name: "Blog", href: "#" },
+      { name: "Support", href: "#" },
+      { name: "Privacy", href: "/privacy" },
+    ]
+  },
   { title: "Community", links: ["Twitter", "Discord", "Email"] },
 ];
 
@@ -22,13 +29,17 @@ export function Footer() {
           <div key={column.title}>
             <h4 className="font-semibold mb-2">{column.title}</h4>
             <ul className="space-y-1 text-sm text-white/70">
-              {column.links.map((link) => (
-                <li key={link}>
-                  <Link href="#" className="hover:text-white">
-                    {link}
-                  </Link>
-                </li>
-              ))}
+              {column.links.map((link) => {
+                const linkName = typeof link === 'string' ? link : link.name;
+                const linkHref = typeof link === 'string' ? '#' : link.href;
+                return (
+                  <li key={linkName}>
+                    <Link href={linkHref} className="hover:text-white">
+                      {linkName}
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}

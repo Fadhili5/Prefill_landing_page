@@ -1,4 +1,8 @@
-// Load Firebase config from API endpoint (more secure)
+// Import Firebase modular SDK (v9+)
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import { getAuth, signInWithPopup, GoogleAuthProvider } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+// Load Firebase config from API endpoint
 async function loadFirebaseConfig() {
   // Try to get from parent window (set by offscreen.js)
   if (window.parent && window.parent.firebaseConfig) {
@@ -14,73 +18,47 @@ async function loadFirebaseConfig() {
     return await response.json();
   } catch (error) {
     console.error('Error loading Firebase config:', error);
-    // Fallback to environment-based config if API fails
-    // This will only work if NEXT_PUBLIC_ vars are available
-    return {
-      apiKey: window.FIREBASE_API_KEY || '',
-      authDomain: window.FIREBASE_AUTH_DOMAIN || '',
-      projectId: window.FIREBASE_PROJECT_ID || '',
-      storageBucket: window.FIREBASE_STORAGE_BUCKET || '',
-      messagingSenderId: window.FIREBASE_MESSAGING_SENDER_ID || '',
-      appId: window.FIREBASE_APP_ID || '',
-      measurementId: window.FIREBASE_MEASUREMENT_ID || '',
-    };
+    throw error;
   }
 }
 
-// Initialize Firebase (async)
-let firebaseInitialized = false;
+// Initialize Firebase
+let app;
+let auth;
+let initialized = false;
 
 async function initializeFirebase() {
-  if (firebaseInitialized) return;
+  if (initialized) return;
   
   const firebaseConfig = await loadFirebaseConfig();
-  firebase.initializeApp(firebaseConfig);
-  firebaseInitialized = true;
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  initialized = true;
 }
 
 // Initialize immediately
-initializeFirebase();
+await initializeFirebase();
 
-// Get auth instance (will be available after initialization)
-function getAuth() {
-  if (!firebaseInitialized) {
-    throw new Error('Firebase not initialized yet');
-  }
-  return firebase.auth();
+// This code runs inside of an iframe in the extension's offscreen document.
+// This gives you a reference to the parent frame, i.e. the offscreen document.
+// You will need this to assign the targetOrigin for postMessage.
+const PARENT_FRAME = document.location.ancestorOrigins?.[0] || window.location.origin;
+
+// This demo uses the Google auth provider, but any supported provider works.
+// Make sure that you enable any provider you want to use in the Firebase Console.
+// https://console.firebase.google.com/project/_/authentication/providers
+const PROVIDER = new GoogleAuthProvider();
+
+function sendResponse(result) {
+  // Send JSON stringified result to parent frame (offscreen.js)
+  // The parent frame will forward this to the extension's service worker
+  globalThis.parent.self.postMessage(JSON.stringify(result), PARENT_FRAME);
 }
 
-// Handle sign in with popup
-// This function will be called by the Chrome extension's offscreen.js
-window.signInWithPopup = async function(provider) {
-  // Ensure Firebase is initialized
-  await initializeFirebase();
-  const auth = getAuth();
-  return auth.signInWithPopup(provider)
-    .then((result) => {
-      // Send result back to parent window (offscreen.js)
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({
-          type: 'FIREBASE_AUTH_SUCCESS',
-          result: result
-        }, '*');
-      }
-      return result;
-    })
-    .catch((error) => {
-      // Send error back to parent window
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({
-          type: 'FIREBASE_AUTH_ERROR',
-          error: error.message
-        }, '*');
-      }
-      throw error;
-    });
-};
-
 // Listen for messages from offscreen.js
-window.addEventListener('message', (event) => {
+globalThis.addEventListener('message', async function(event) {
+  const { data } = event;
+  
   // Verify origin for security (only accept messages from Chrome extension or same origin)
   const allowedOrigins = [
     'chrome-extension://',
@@ -88,26 +66,25 @@ window.addEventListener('message', (event) => {
   ];
   
   const isValidOrigin = allowedOrigins.some(allowed => 
-    event.origin.startsWith(allowed)
+    event.origin?.startsWith(allowed)
   );
   
   if (!isValidOrigin) {
     console.warn('Rejected message from unauthorized origin:', event.origin);
     return;
   }
-  
-  if (event.data.type === 'FIREBASE_SIGNIN_REQUEST') {
-    const { provider } = event.data;
-    // Ensure Firebase is initialized before signing in
-    initializeFirebase().then(() => {
-      return window.signInWithPopup(provider);
-    })
-      .then(() => {
-        // Success already handled in signInWithPopup
-      })
-      .catch((error) => {
-        console.error('Sign in error:', error);
-      });
+
+  if (data.initAuth) {
+    // Ensure Firebase is initialized
+    await initializeFirebase();
+    
+    // Opens the Google sign-in page in a popup, inside of an iframe in the
+    // extension's offscreen document.
+    // To centralize logic, all responses are forwarded to the parent frame,
+    // which goes on to forward them to the extension's service worker.
+    signInWithPopup(auth, PROVIDER)
+      .then(sendResponse)
+      .catch(sendResponse);
   }
 });
 
@@ -115,6 +92,5 @@ window.addEventListener('message', (event) => {
 if (window.parent && window.parent !== window) {
   window.parent.postMessage({
     type: 'FIREBASE_SCRIPT_LOADED'
-  }, '*');
+  }, PARENT_FRAME);
 }
-
